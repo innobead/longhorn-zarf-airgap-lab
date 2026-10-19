@@ -50,6 +50,14 @@ One EC2 node (Ubuntu 24.04, `m6i.xlarge`, two extra EBS disks) runs single-node 
 3. **Air-gapped phase.** Every install, upgrade, takeover and removal runs from the local packages. Images come from the
    Zarf registry, git from Gitea; the Zarf agent rewrites references at admission.
 
+**Why one node.** A real site builds packages on a connected machine and carries them across the gap. Here, the same node
+plays both roles at different times, so there is no separate builder or transfer step. The cut is real: no internet route.
+
+**What S3 is for.** The bucket carries the lab's source files (`scripts/`, `packages/` definitions, `tests/`), not built
+packages. EC2 user-data is too small for them. After the cut, `lab sync` pulls edited files over the S3 VPC endpoint, so
+script changes apply immediately. A changed package definition (hooks, values, versions) needs a rebuild, which needs the
+internet: reconnect, `lab prep`, cut again.
+
 **Assumption, not part of the solution:** host OS packages (`open-iscsi`, `nfs-common`, `cryptsetup`) come from the site's own
 apt mirror. The lab installs them during the online phase. Offline, `longhornctl install preflight` still runs `apt update`;
 it only warns (about 40 s of timeouts), and the packages are already installed.
