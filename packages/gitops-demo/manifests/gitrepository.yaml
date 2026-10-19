@@ -1,0 +1,12 @@
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  name: podinfo
+spec:
+  interval: 1m
+  ref:
+    tag: 6.15.0
+  # The Zarf agent rewrites this to
+  # http://zarf-gitea-http.zarf.svc.cluster.local:3000/zarf-git-user/podinfo-<crc32>.git
+  # and adds secretRef: private-git-server. It only mutates scheme://host/repo URLs.
+  url: https://github.com/stefanprodan/podinfo.git

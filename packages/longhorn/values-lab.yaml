@@ -1,0 +1,44 @@
+# Overlay on the upstream chart defaults (same keys work for 1.12.x and 1.13.x).
+global:
+  # Required: Longhorn creates engine/instance-manager images from settings, not only pod specs.
+  imageRegistry: "###ZARF_REGISTRY###"
+
+# Leave csi.kubeletRootDir unset; Longhorn auto-detects it. (examples/longhorn sets an old
+# K3s path, /var/lib/rancher/k3s/agent/kubelet, which modern K3s no longer uses.)
+
+persistence:
+  # The chart's `longhorn` class stays V1 and non-default; manifests/storageclass-v2.yaml
+  # (`longhorn-v2`) is the cluster default StorageClass.
+  defaultClass: false
+  defaultClassReplicaCount: 1
+  dataEngine: v1
+
+service:
+  ui:
+    type: NodePort
+    nodePort: 30080
+
+# 1.13+: global manager defaults to 3 replicas with soft anti-affinity.
+longhornGlobalManager:
+  replicas: 1
+
+defaultSettings:
+  defaultReplicaCount: {v1: "1", v2: "1"}
+  # Re-applied from the longhorn-default-setting ConfigMap on every upgrade, so it stays on.
+  v2DataEngine: true
+  # Disks come from the node's node.longhorn.io/default-disks-config annotation (set by the
+  # preflight component). Longhorn only uses it while the node has no disks, so upgrades never change them.
+  createDefaultDiskLabeledNodes: true
+  dataEngineHugepageEnabled: {v2: "true"}
+  dataEngineMemorySize: {v2: "2048"}
+  # Upgrade volume engines automatically after a Longhorn upgrade (detached + attached V1 volumes).
+  concurrentAutomaticEngineUpgradePerNodeLimit: 1
+  # Single node: allow replicas to land on the same node, don't block drains.
+  replicaSoftAntiAffinity: true
+  nodeDrainPolicy: always-allow
+
+# Keep the chart default (true): it enforces the one-minor-at-a-time upgrade path.
+# examples/longhorn disables this without explanation.
+preUpgradeChecker:
+  jobEnabled: true
+  upgradeVersionCheck: true

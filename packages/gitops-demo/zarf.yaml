@@ -1,0 +1,96 @@
+kind: ZarfPackageConfig
+metadata:
+  name: gitops-demo
+  description: Flux pulls podinfo from the in-cluster Gitea (pushed by Zarf) and runs it on a Longhorn PVC
+  version: "0.1.0"
+  architecture: "###ZARF_PKG_TMPL_ARCH###"
+variables:
+  - name: STORAGE_CLASS
+    description: StorageClass for the podinfo /data PVC (longhorn = V1, longhorn-v2 = V2)
+    default: longhorn
+components:
+  - name: flux
+    required: true
+    manifests:
+      - name: flux-install
+        namespace: flux-system
+        files:
+          - https://github.com/fluxcd/flux2/releases/download/v2.9.6/install.yaml
+    images:
+      - ghcr.io/fluxcd/helm-controller:v1.6.5
+      - ghcr.io/fluxcd/image-automation-controller:v1.2.5
+      - ghcr.io/fluxcd/image-reflector-controller:v1.2.5
+      - ghcr.io/fluxcd/kustomize-controller:v1.9.6
+      - ghcr.io/fluxcd/notification-controller:v1.9.4
+      - ghcr.io/fluxcd/source-controller:v1.9.6
+      - ghcr.io/fluxcd/source-watcher:v2.2.4
+    actions:
+      onDeploy:
+        after:
+          - wait:
+              cluster:
+                kind: deployment
+                name: source-controller
+                namespace: flux-system
+                condition: Available
+          - wait:
+              cluster:
+                kind: deployment
+                name: kustomize-controller
+                namespace: flux-system
+                condition: Available
+  - name: podinfo
+    required: true
+    # Zarf mirrors this repo (with the 6.15.0 tag) into Gitea. The agent rewrites the
+    # GitRepository URL below to Gitea at admission time; this entry is NOT rewritten.
+    repos:
+      - https://github.com/stefanprodan/podinfo.git@6.15.0
+    images:
+      - ghcr.io/stefanprodan/podinfo:6.15.0
+      # Used by tests/v2-workload.yaml (V2 data engine check); carried here so it is in the registry.
+      - busybox:1.37
+    manifests:
+      - name: podinfo-gitops
+        namespace: podinfo
+        files:
+          - manifests/pvc.yaml
+          - manifests/gitrepository.yaml
+          - manifests/kustomization.yaml
+          - manifests/service.yaml
+    actions:
+      onDeploy:
+        defaults:
+          shell:
+            linux: bash
+        after:
+          - description: Show the Gitea URL the agent wrote into the GitRepository
+            cmd: ./zarf tools kubectl -n podinfo get gitrepository podinfo -o jsonpath='{.spec.url}{"\n"}'
+          - wait:
+              cluster:
+                kind: kustomizations.kustomize.toolkit.fluxcd.io
+                name: podinfo
+                namespace: podinfo
+                condition: Ready
+            maxTotalSeconds: 600
+          - wait:
+              cluster:
+                kind: deployment
+                name: podinfo
+                namespace: podinfo
+                condition: Available
+            maxTotalSeconds: 600
+      onRemove:
+        defaults:
+          shell:
+            linux: bash
+        after:
+          - description: Delete the podinfo namespace and wait for the Longhorn volume to be released
+            maxTotalSeconds: 600
+            cmd: |
+              ./zarf tools kubectl delete namespace podinfo --ignore-not-found --wait=true --timeout=5m
+              for i in $(seq 1 60); do
+                n=$(./zarf tools kubectl get volumes.longhorn.io -n longhorn-system --no-headers 2>/dev/null | wc -l)
+                [[ "$n" -eq 0 ]] && exit 0
+                sleep 5
+              done
+              echo "Longhorn volumes still present" >&2; exit 1

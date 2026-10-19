@@ -1,0 +1,47 @@
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: podinfo
+spec:
+  interval: 5m
+  path: ./kustomize
+  prune: true
+  wait: true
+  timeout: 5m
+  targetNamespace: podinfo
+  sourceRef:
+    kind: GitRepository
+    name: podinfo
+  patches:
+    # Single node + RWO volume: pin to one replica.
+    - target:
+        kind: HorizontalPodAutoscaler
+        name: podinfo
+      patch: |
+        - op: replace
+          path: /spec/minReplicas
+          value: 1
+        - op: replace
+          path: /spec/maxReplicas
+          value: 1
+    # Swap the emptyDir for the Longhorn PVC; podinfo runs as non-root, so set fsGroup.
+    - target:
+        kind: Deployment
+        name: podinfo
+      patch: |
+        - op: replace
+          path: /spec/template/spec/volumes/0
+          value:
+            name: data
+            persistentVolumeClaim:
+              claimName: podinfo-data
+        - op: add
+          path: /spec/template/spec/securityContext
+          value:
+            runAsUser: 1000
+            runAsGroup: 1000
+            fsGroup: 1000
+        - op: replace
+          path: /spec/strategy
+          value:
+            type: Recreate

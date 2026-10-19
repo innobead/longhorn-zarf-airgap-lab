@@ -1,0 +1,11 @@
+prefix  = "jdoe"         # prepended to all AWS resource names
+region  = "us-west-2"
+owner   = "jdoe"
+
+# profile = "dev"   # unset = default credential chain ([default] in ~/.aws/credentials, or AWS_PROFILE)
+
+# instance_type   = "m6i.xlarge"
+# auto_prep       = true   # zarf init + build all packages during bootstrap
+
+# Cut the cord after bootstrap/prep (then: terraform apply). Set back to false to reconnect.
+# airgap          = true

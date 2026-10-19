@@ -1,0 +1,94 @@
+#!/usr/bin/env bash
+# Rendered by Terraform templatefile(): a doubled dollar-brace is a literal shell expansion.
+set -euxo pipefail
+exec > >(tee -a /var/log/lab-bootstrap.log) 2>&1
+
+export HOME=/root
+export DEBIAN_FRONTEND=noninteractive
+BUCKET="${bucket}"
+REGION="${region}"
+ZARF_VERSION="${zarf_version}"
+V1_BYTES=$(( ${v1_disk_gb} * 1024 * 1024 * 1024 ))
+V2_BYTES=$(( ${v2_disk_gb} * 1024 * 1024 * 1024 ))
+
+case "$(uname -m)" in
+  x86_64) ARCH=amd64 ;;
+  aarch64) ARCH=arm64 ;;
+esac
+
+# --- packages -----------------------------------------------------------------
+apt-get update -y
+# Longhorn host prerequisites (what `longhornctl install preflight` would apt-install) are
+# installed while online. Once air-gapped, apt is assumed to be served by the site's own
+# mirror; it is not part of what Zarf carries.
+apt-get install -y jq curl unzip zstd open-iscsi nfs-common cryptsetup dmsetup
+apt-get install -y "linux-modules-extra-$(uname -r)" || echo "linux-modules-extra-$(uname -r) not available"
+snap install aws-cli --classic || true
+curl -fsSL -o /usr/local/bin/yq "https://github.com/mikefarah/yq/releases/latest/download/yq_linux_$ARCH"
+chmod +x /usr/local/bin/yq
+
+# --- disks (EBS on Nitro shows up as NVMe; identify by size) -------------------
+disk_by_size() {
+  lsblk -b -dn -o NAME,SIZE,TYPE | awk -v s="$1" '$2==s && $3=="disk" {print "/dev/"$1; exit}'
+}
+by_id() {
+  local dev="$1" l
+  for l in /dev/disk/by-id/nvme-Amazon_Elastic_Block_Store_vol*; do
+    [[ "$l" == *-part* || "$l" == *_[0-9] ]] && continue
+    [[ "$(readlink -f "$l")" == "$dev" ]] && { echo "$l"; return; }
+  done
+  echo "$dev"
+}
+
+for _ in $(seq 1 30); do
+  V1_DEV=$(disk_by_size "$V1_BYTES"); V2_DEV=$(disk_by_size "$V2_BYTES")
+  [[ -n "$V1_DEV" && -n "$V2_DEV" ]] && break
+  sleep 2
+done
+
+mkdir -p /var/lib/longhorn
+if ! blkid "$V1_DEV" >/dev/null 2>&1; then
+  mkfs.ext4 -F -L longhorn-v1 "$V1_DEV"
+fi
+UUID=$(blkid -s UUID -o value "$V1_DEV")
+grep -q "$UUID" /etc/fstab || echo "UUID=$UUID /var/lib/longhorn ext4 defaults,nofail 0 2" >> /etc/fstab
+mount -a
+
+# V2 disk stays raw; Longhorn (SPDK aio bdev) owns it. Register it by its stable by-id
+# path: /dev/nvmeXn1 names can swap across reboots and would point Longhorn at the wrong disk.
+cat > /etc/longhorn-lab.env <<EOF
+V1_DISK_DEV=$V1_DEV
+V2_DISK_DEV=$V2_DEV
+V2_DISK_PATH=$(by_id "$V2_DEV")
+LAB_BUCKET=$BUCKET
+LAB_REGION=$REGION
+EOF
+
+# --- zarf ---------------------------------------------------------------------
+curl -fsSL -o /usr/local/bin/zarf \
+  "https://github.com/zarf-dev/zarf/releases/download/$ZARF_VERSION/zarf_$${ZARF_VERSION}_Linux_$ARCH"
+chmod +x /usr/local/bin/zarf
+printf '#!/bin/sh\nexec /usr/local/bin/zarf tools helm "$@"\n' > /usr/local/bin/helm
+chmod +x /usr/local/bin/helm
+
+# --- lab content --------------------------------------------------------------
+mkdir -p /opt/lab
+aws s3 sync --region "$REGION" --only-show-errors "s3://$BUCKET/" /opt/lab/
+chmod +x /opt/lab/scripts/*.sh
+ln -sf /opt/lab/scripts/lab.sh /usr/local/bin/lab
+
+cat > /etc/profile.d/lab.sh <<'EOF'
+export KUBECONFIG=/root/.kube/config
+export PATH=$PATH:/usr/sbin
+EOF
+
+# --- zarf init + build every package while still online ---------------------------
+# After this, cut the cord: set airgap = true and terraform apply.
+%{ if auto_prep ~}
+lab prep
+%{ else ~}
+echo "auto_prep=false: run 'lab prep' before setting airgap = true."
+%{ endif ~}
+
+touch /var/lib/lab-bootstrap.done
+echo "BOOTSTRAP DONE"

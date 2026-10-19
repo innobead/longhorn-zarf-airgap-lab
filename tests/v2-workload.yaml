@@ -1,0 +1,34 @@
+# V2 data engine smoke workload, applied by `lab write` (not a Zarf package). busybox ships in
+# the gitops-demo package; the Zarf agent rewrites it to the in-cluster registry, and `lab write`
+# creates the v2-test namespace with a copy of Zarf's pull secret.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: v2-writer
+  namespace: v2-test
+spec:
+  serviceName: v2-writer
+  replicas: 1
+  selector:
+    matchLabels: {app: v2-writer}
+  template:
+    metadata:
+      labels: {app: v2-writer}
+    spec:
+      terminationGracePeriodSeconds: 5
+      containers:
+        - name: sh
+          image: busybox:1.37
+          command: ["sh", "-c", "sleep infinity"]
+          volumeMounts:
+            - name: data
+              mountPath: /data
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: [ReadWriteOnce]
+        storageClassName: longhorn-v2
+        resources:
+          requests:
+            storage: 2Gi

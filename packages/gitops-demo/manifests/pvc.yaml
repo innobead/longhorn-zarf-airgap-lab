@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: podinfo-data
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: "###ZARF_VAR_STORAGE_CLASS###"
+  resources:
+    requests:
+      storage: 1Gi

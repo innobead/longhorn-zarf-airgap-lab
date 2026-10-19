@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: longhorn-lab-marker
+  labels:
+    app.kubernetes.io/part-of: longhorn-zarf-airgap-lab
+data:
+  purpose: >-
+    Forces Zarf to create longhorn-system (zarf.dev/agent=mutate, private-registry secret)
+    before longhornctl schedules its preflight DaemonSet.

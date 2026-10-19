@@ -1,0 +1,232 @@
+kind: ZarfPackageConfig
+metadata:
+  name: longhorn-lab
+  description: Longhorn ###ZARF_PKG_TMPL_LONGHORN_VERSION### (V1 + V2 data engine) with longhornctl preflight/diagnose hooks
+  version: "###ZARF_PKG_TMPL_LONGHORN_VERSION###"
+  architecture: "###ZARF_PKG_TMPL_ARCH###"
+
+variables:
+  - name: V2_DISK_PATH
+    description: Raw block device registered as a V2 (SPDK aio) disk. Empty = skip.
+    default: ""
+  - name: STORAGE_CLASS_REPLICAS
+    description: numberOfReplicas for the lab StorageClasses (single node = 1)
+    default: "1"
+
+components:
+  # Runs first: installs host prerequisites (iSCSI, NFS, kernel modules, hugepages for SPDK)
+  # with the version-matched longhornctl, then fails the deploy if `check preflight` reports errors.
+  # The manifest makes Zarf create longhorn-system (agent=mutate + private-registry secret)
+  # before longhornctl schedules its DaemonSet there.
+  - name: longhorn-preflight
+    required: true
+    files:
+      - source: https://github.com/longhorn/cli/releases/download/v###ZARF_PKG_TMPL_LONGHORN_VERSION###/longhornctl-linux-###ZARF_PKG_TMPL_ARCH###
+        target: /usr/local/bin/longhornctl
+        executable: true
+    manifests:
+      - name: longhorn-namespace
+        namespace: longhorn-system
+        files:
+          - manifests/lab-marker.yaml
+    images:
+      - longhornio/longhorn-cli:v###ZARF_PKG_TMPL_LONGHORN_VERSION###
+    actions:
+      onDeploy:
+        defaults:
+          shell:
+            linux: bash
+          maxTotalSeconds: 1800
+        after:
+          - description: longhornctl install preflight (V1 + V2/SPDK prerequisites)
+            cmd: |
+              set -euo pipefail
+              export KUBECONFIG="${KUBECONFIG:-/root/.kube/config}"
+              # On K3s the kubelet restart also restarts the API server, so the first run may lose
+              # its connection. The installer is idempotent: wait for the API and retry.
+              for attempt in 1 2 3; do
+                if /usr/local/bin/longhornctl install preflight \
+                  --image longhornio/longhorn-cli:v###ZARF_PKG_TMPL_LONGHORN_VERSION### \
+                  --enable-spdk --huge-page-size 2048 --spdk-options PERSIST_HUGE=yes \
+                  --restart-kubelet --restart-kubelet-window 10s; then
+                  exit 0
+                fi
+                echo "install preflight attempt $attempt failed; waiting for API server" >&2
+                sleep 15
+                for i in $(seq 1 60); do
+                  ./zarf tools kubectl get --raw=/readyz >/dev/null 2>&1 && break
+                  sleep 5
+                done
+              done
+              exit 1
+          - description: Wait for API server and hugepages-2Mi to be advertised after the kubelet restart
+            cmd: |
+              set -euo pipefail
+              export KUBECONFIG="${KUBECONFIG:-/root/.kube/config}"
+              for i in $(seq 1 90); do
+                if hp=$(./zarf tools kubectl get nodes -o jsonpath='{.items[0].status.allocatable.hugepages-2Mi}' 2>/dev/null) \
+                   && [[ -n "$hp" && "$hp" != "0" ]]; then
+                  echo "hugepages-2Mi allocatable: $hp"; exit 0
+                fi
+                sleep 5
+              done
+              echo "hugepages-2Mi never became allocatable" >&2; exit 1
+          - description: longhornctl check preflight (exits 0 even on failure, so grep the per-node error list)
+            cmd: |
+              set -euo pipefail
+              export KUBECONFIG="${KUBECONFIG:-/root/.kube/config}"
+              out=$(/usr/local/bin/longhornctl check preflight \
+                --image longhornio/longhorn-cli:v###ZARF_PKG_TMPL_LONGHORN_VERSION### \
+                --enable-spdk --huge-page-size 2048 2>&1)
+              echo "$out"
+              if grep -qE '^  error:' <<<"$out"; then
+                echo "longhornctl check preflight reported errors" >&2; exit 1
+              fi
+          - description: Declare Longhorn default disks on the node (V1 /var/lib/longhorn + V2 raw block disk)
+            cmd: |
+              set -euo pipefail
+              export KUBECONFIG="${KUBECONFIG:-/root/.kube/config}"
+              # Used by create-default-disk-labeled-nodes only while the Longhorn node has no disks,
+              # i.e. on first install. Upgrades leave existing disks alone.
+              disks='[{"path":"/var/lib/longhorn","allowScheduling":true}'
+              if [[ -n "${ZARF_VAR_V2_DISK_PATH:-}" ]]; then
+                disks+=',{"name":"v2disk","path":"'"$ZARF_VAR_V2_DISK_PATH"'","diskType":"block","diskDriver":"aio","allowScheduling":true}'
+              fi
+              disks+=']'
+              node=$(./zarf tools kubectl get nodes -o jsonpath='{.items[0].metadata.name}')
+              ./zarf tools kubectl label node "$node" node.longhorn.io/create-default-disk=config --overwrite
+              ./zarf tools kubectl annotate node "$node" node.longhorn.io/default-disks-config="$disks" --overwrite
+      onRemove:
+        defaults:
+          shell:
+            linux: bash
+        after:
+          # Components are removed in reverse order, so the `longhorn` component has already set
+          # deleting-confirmation-flag and run the chart's uninstall job. Only the marker ConfigMap and
+          # Zarf secrets remain. Guard against `--components longhorn-preflight` on a live install.
+          - description: Delete longhorn-system (Zarf leaves namespaces behind)
+            cmd: |
+              set -euo pipefail
+              if ./zarf tools kubectl get crd settings.longhorn.io >/dev/null 2>&1; then
+                echo "Longhorn is still installed; remove the 'longhorn' component first" >&2; exit 1
+              fi
+              ./zarf tools kubectl delete namespace longhorn-system --ignore-not-found --wait=true --timeout=5m
+
+  # Optional: longhornctl with `diagnose` (longhorn/longhorn#3355, planned for v1.14.0),
+  # extracted at build time from longhornio/longhorn-cli:<dev tag>. Removed from the package
+  # by `lab build --no-diagnose`.
+  - name: longhorn-diagnose
+    required: false
+    default: true
+    files:
+      - source: bin/longhornctl-diagnose
+        target: /usr/local/bin/longhornctl-diagnose
+        executable: true
+
+  - name: longhorn
+    required: true
+    charts:
+      - name: longhorn
+        releaseName: longhorn
+        namespace: longhorn-system
+        url: https://charts.longhorn.io
+        version: "###ZARF_PKG_TMPL_LONGHORN_VERSION###"
+        valuesFiles:
+          - values-lab.yaml
+    manifests:
+      - name: longhorn-lab-extras
+        namespace: longhorn-system
+        files:
+          - manifests/storageclass-v2.yaml
+          - manifests/connect.yaml
+    images: [] # filled by `lab build` from longhorn-images.txt
+    actions:
+      onDeploy:
+        defaults:
+          shell:
+            linux: bash
+        after:
+          - description: Longhorn readiness (longhornctl diagnose if present, else Zarf waits)
+            maxTotalSeconds: 1200
+            cmd: |
+              set -uo pipefail
+              export KUBECONFIG="${KUBECONFIG:-/root/.kube/config}"
+              if [[ -x /usr/local/bin/longhornctl-diagnose ]]; then
+                for i in $(seq 1 60); do
+                  if /usr/local/bin/longhornctl-diagnose diagnose; then exit 0; fi
+                  echo "diagnose not healthy yet (attempt $i), retrying in 15s"; sleep 15
+                done
+                exit 1
+              fi
+              set -e
+              ./zarf tools wait-for resource daemonset longhorn-manager '{.status.numberReady}'=1 -n longhorn-system --timeout 10m
+              ./zarf tools wait-for resource deployment longhorn-driver-deployer Available -n longhorn-system --timeout 10m
+              ./zarf tools wait-for resource daemonset longhorn-csi-plugin '{.status.numberReady}'=1 -n longhorn-system --timeout 10m
+              node=$(./zarf tools kubectl get nodes -o jsonpath='{.items[0].metadata.name}')
+              ./zarf tools wait-for resource nodes.longhorn.io "$node" '{.status.conditions[?(@.type=="Ready")].status}'=True -n longhorn-system --timeout 10m
+          - description: Wait for the V2 block disk (created from the node annotation; patched in if the node already had disks, e.g. after a Helm takeover)
+            maxTotalSeconds: 600
+            cmd: |
+              set -euo pipefail
+              export KUBECONFIG="${KUBECONFIG:-/root/.kube/config}"
+              disk="${ZARF_VAR_V2_DISK_PATH:-}"
+              if [[ -z "$disk" ]]; then echo "V2_DISK_PATH empty, skipping"; exit 0; fi
+              node=$(./zarf tools kubectl get nodes -o jsonpath='{.items[0].metadata.name}')
+              patch="{\"spec\":{\"disks\":{\"v2disk\":{
+                  \"path\":\"$disk\",\"diskType\":\"block\",\"diskDriver\":\"aio\",
+                  \"allowScheduling\":true,\"evictionRequested\":false,\"storageReserved\":0,\"tags\":[]}}}}"
+              # The Longhorn webhook rejects disk edits while disk spec/status is still syncing.
+              for i in $(seq 1 30); do
+                ./zarf tools kubectl -n longhorn-system patch nodes.longhorn.io "$node" --type merge -p "$patch" && break
+                [[ $i -eq 30 ]] && exit 1
+                sleep 10
+              done
+              ./zarf tools wait-for resource nodes.longhorn.io "$node" \
+                '{.status.diskStatus.v2disk.conditions[?(@.type=="Ready")].status}'=True \
+                -n longhorn-system --timeout 8m
+          - description: Make longhorn-v2 the only default StorageClass (K3s marks local-path as default)
+            cmd: |
+              if ./zarf tools kubectl get storageclass local-path >/dev/null 2>&1; then
+                ./zarf tools kubectl annotate storageclass local-path storageclass.kubernetes.io/is-default-class=false --overwrite
+              fi
+      onRemove:
+        defaults:
+          shell:
+            linux: bash
+        before:
+          - description: Refuse to uninstall while Longhorn volumes exist (set LAB_FORCE_REMOVE=true to override)
+            cmd: |
+              set -euo pipefail
+              n=$(./zarf tools kubectl get volumes.longhorn.io -n longhorn-system --no-headers 2>/dev/null | wc -l)
+              if [[ "$n" -gt 0 && "${LAB_FORCE_REMOVE:-false}" != "true" ]]; then
+                ./zarf tools kubectl get volumes.longhorn.io -n longhorn-system
+                echo "$n Longhorn volume(s) still exist; remove workloads/PVCs first" >&2; exit 1
+              fi
+          - description: Allow the chart's pre-delete uninstall job to proceed
+            cmd: |
+              set -euo pipefail
+              ./zarf tools kubectl -n longhorn-system patch settings.longhorn.io deleting-confirmation-flag \
+                --type merge -p '{"value":"true"}'
+              # The uninstall job reads the flag from an informer (apiserver watch cache), which can lag
+              # behind the write, e.g. right after CRDs were deleted. Wait until the cached view agrees.
+              url=/apis/longhorn.io/v1beta2/namespaces/longhorn-system/settings/deleting-confirmation-flag?resourceVersion=0
+              for i in $(seq 1 30); do
+                ./zarf tools kubectl get --raw "$url" | grep -q '"value":"true"' && exit 0
+                sleep 2
+              done
+              echo "deleting-confirmation-flag not visible in the watch cache" >&2; exit 1
+        after:
+          - description: Restore local-path as the default StorageClass
+            cmd: |
+              if ./zarf tools kubectl get storageclass local-path >/dev/null 2>&1; then
+                ./zarf tools kubectl annotate storageclass local-path storageclass.kubernetes.io/is-default-class=true --overwrite
+              fi
+          - description: Optionally wipe host disks (LAB_WIPE_DISKS=true)
+            cmd: |
+              set -euo pipefail
+              [[ "${LAB_WIPE_DISKS:-false}" == "true" ]] || exit 0
+              source /etc/longhorn-lab.env
+              find /var/lib/longhorn -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+              [[ -n "${V2_DISK_PATH:-}" ]] && wipefs -a "$V2_DISK_PATH" && \
+                dd if=/dev/zero of="$V2_DISK_PATH" bs=1M count=64 oflag=direct status=none
+              echo "disks wiped"
