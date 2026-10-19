@@ -209,13 +209,9 @@ Disks are identified by size, so the sizes must differ. `V2_DISK_PATH` in `/etc/
   images (`…:v1.12.1` → `127.0.0.1:31999/…:v1.12.1-zarf-<crc>`) but not the `--manager-image` argument. The manager
   compares the two, treats itself as an old manager, and waits until it times out, over and over. Longhorn also creates
   engine and instance-manager images from settings, not from pod specs.
-- **Takeover and instance managers.** If a takeover changes image references (e.g. a different registry), Longhorn
-  creates new instance managers; on a single node the new V2 instance manager stays `stopped` while the old one serves an
-  attached V2 volume. Here the references don't change, but s3 still detaches the V2 workload first; `verify` scales it back.
-- **The kubelet restart in a hook** restarts K3s, and with it the API server, while a Zarf deploy is running. The hook
-  retries and waits for `/readyz` and hugepages.
-- **`check preflight` exits 0 on failure**, so the hook greps its output.
-- **`install preflight` offline**: `apt update` fails with warnings only; already-installed packages are skipped.
+- **Takeover and instance managers.** If a takeover changes image references, Longhorn creates new instance managers;
+  on a single node the new V2 one stays `stopped` while the old one serves an attached V2 volume. So s3 detaches the V2
+  workload first, even though the references don't change here; `verify` scales it back.
 - **The uninstall job can read a stale `deleting-confirmation-flag`.** It reads the flag through an informer (the
   apiserver watch cache). Right after the demo's Flux CRDs were deleted, the cache lagged and both job attempts saw
   `false`. The remove hook and `lab remove` now patch the flag and wait until a `?resourceVersion=0` read returns `true`.
