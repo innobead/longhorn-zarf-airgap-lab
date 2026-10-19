@@ -162,9 +162,9 @@ with `lab s3`.
    - `longhornctl check preflight --enable-spdk`. This **always exits 0**, so the hook greps the per-node `error:` list.
    - label the node `node.longhorn.io/create-default-disk=config` and set `node.longhorn.io/default-disks-config` to the V1
      disk plus the V2 block disk `v2disk`. Longhorn uses this only when it first registers the node, so upgrades never change disks.
-2. **longhorn-diagnose** (optional, default on): `longhornctl` from `longhornio/longhorn-cli:v1.14.0-dev-20261004`
-   (longhorn/longhorn#3355). Only v1.14.0-dev builds have `diagnose`, so `lab build` extracts the binary from the image.
-   `lab build <ver> --no-diagnose` drops it.
+2. **longhorn-diagnose** (optional, default on): `longhornctl diagnose` ships in Longhorn 1.14 (longhorn/longhorn#3355).
+   Until then, the lab uses a dev build (`longhornio/longhorn-cli:v1.14.0-dev-20261004`) only to check Longhorn health;
+   `lab build` extracts the binary from the image. `lab build <ver> --no-diagnose` drops it.
 3. **longhorn**: the upstream chart with `values-lab.yaml` (single-node replicas, V2 enabled, `global.imageRegistry`
    set to the Zarf registry, UI NodePort 30080) plus the `longhorn-v2` StorageClass, which becomes the default.
    Images come from the release's `longhorn-images.txt`. Hooks:
@@ -220,7 +220,6 @@ Disks are identified by size, so the sizes must differ. `V2_DISK_PATH` in `/etc/
   shallow copy of the component, so the saved state gets an empty `{chartName: ""}` entry in place of the removed chart.
   Every retry then fails with `Release name is invalid`. Workaround: delete the empty entry from the
   `zarf-package-<name>` secret in the `zarf` namespace.
-- **`diagnose` from 1.14-dev works against 1.12 and 1.13**, read-only.
 - **`examples/longhorn` in the Zarf repo** sets `csi.kubeletRootDir: /var/lib/rancher/k3s/agent/kubelet`. Current K3s uses
   `/var/lib/kubelet`, which Longhorn detects, so this lab leaves it unset. The example also disables `upgradeVersionCheck`.
 
