@@ -4,14 +4,14 @@ variable "region" {
 }
 
 variable "profile" {
-  description = "AWS CLI profile for the dev account (null = default credential chain)."
+  description = "AWS CLI profile (null = default credential chain)."
   type        = string
   default     = null
 }
 
 variable "owner" {
-  type    = string
-  default = "longhorn-dev"
+  description = "Value of the Owner tag on every AWS resource (e.g. your handle: jdoe)."
+  type        = string
 }
 
 variable "prefix" {
