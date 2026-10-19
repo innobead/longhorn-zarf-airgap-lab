@@ -3,7 +3,10 @@
 set -euo pipefail
 cd "$(dirname "$0")/../terraform"
 
-out() { terraform output -raw "$1"; }
+out() {
+  if command -v terraform >/dev/null; then terraform output -raw "$1"
+  else jq -er ".outputs.$1.value" terraform.tfstate; fi   # no terraform CLI (e.g. run via Docker)
+}
 ID=$(out instance_id); REGION=$(out region)
 ssm() { aws ssm start-session --region "$REGION" --target "$ID" "$@"; }
 

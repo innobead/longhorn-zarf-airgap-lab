@@ -67,7 +67,8 @@ tests/v2-workload.yaml V2 (SPDK) smoke StatefulSet
 ## Provision
 
 Needs Terraform and AWS credentials (the default profile, or `profile` in tfvars). Interactive sessions and port-forwards
-need the AWS `session-manager-plugin`.
+need the AWS `session-manager-plugin`. `scripts/ssm.sh` reads `terraform output`, or `terraform/terraform.tfstate` with
+`jq` when the Terraform CLI isn't installed (e.g. Terraform run via Docker).
 
 ```bash
 cd terraform
