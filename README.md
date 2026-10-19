@@ -129,6 +129,8 @@ Versions: `lab prep` resolves the latest stable 1.12.x and 1.13.x whose chart an
 | 11 | Verify | restart podinfo, read data back (V1 + V2) |
 | 12 | Final health | `longhornctl diagnose` |
 
+See [docs/demo-transcript.md](docs/demo-transcript.md) for the full output of a real run.
+
 From your laptop, in three terminals:
 
 ```bash
