@@ -474,8 +474,9 @@ demo_show_gitops() {
   k -n podinfo get gitrepository podinfo -o jsonpath='  {.spec.url}{"\n"}'
   k -n podinfo get gitrepository,kustomization
   k -n podinfo get pvc -o custom-columns=PVC:.metadata.name,SC:.spec.storageClassName,STATUS:.status.phase,VOLUME:.spec.volumeName
-  echo; echo "podinfo image (rewritten to the Zarf registry):"
-  k -n podinfo get deploy podinfo -o jsonpath='  {.spec.template.spec.containers[0].image}{"\n"}'
+  echo; echo "podinfo image: the Deployment keeps the upstream reference; the Zarf agent rewrites the Pod to its registry:"
+  k -n podinfo get deploy podinfo -o jsonpath='  Deployment: {.spec.template.spec.containers[0].image}{"\n"}'
+  k -n podinfo get pod -l app=podinfo -o jsonpath='  Pod:        {.items[0].spec.containers[0].image}{"\n"}'
 }
 
 demo_show_engines() {

@@ -981,8 +981,9 @@ kustomization.kustomize.toolkit.fluxcd.io/podinfo   69s   True    Applied revisi
 PVC            SC         STATUS   VOLUME
 podinfo-data   longhorn   Bound    pvc-cb7942d7-2e12-46f1-a1d3-74d276ce241a
 
-podinfo image (rewritten to the Zarf registry):
-  ghcr.io/stefanprodan/podinfo:6.15.0
+podinfo image: the Deployment keeps the upstream reference; the Zarf agent rewrites the Pod to its registry:
+  Deployment: ghcr.io/stefanprodan/podinfo:6.15.0
+  Pod:        127.0.0.1:31999/stefanprodan/podinfo:6.15.0-zarf-2985051089
 ```
 
 ## Step 8: Write data
