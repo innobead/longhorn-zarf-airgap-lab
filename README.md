@@ -215,7 +215,8 @@ Disks are identified by size, so the sizes must differ. `V2_DISK_PATH` in `/etc/
 - **The uninstall job can read a stale `deleting-confirmation-flag`.** It reads the flag through an informer (the
   apiserver watch cache). Right after the demo's Flux CRDs were deleted, the cache lagged and both job attempts saw
   `false`. The remove hook and `lab remove` now patch the flag and wait until a `?resourceVersion=0` read returns `true`.
-- **Zarf bug: a failed chart uninstall leaves the package unremovable.** In `remove.go`, `slices.DeleteFunc` runs on a
+- **Zarf bug: a failed chart uninstall leaves the package unremovable**
+  ([zarf-dev/zarf#5491](https://github.com/zarf-dev/zarf/issues/5491)). In `remove.go`, `slices.DeleteFunc` runs on a
   shallow copy of the component, so the saved state gets an empty `{chartName: ""}` entry in place of the removed chart.
   Every retry then fails with `Release name is invalid`. Workaround: delete the empty entry from the
   `zarf-package-<name>` secret in the `zarf` namespace.
